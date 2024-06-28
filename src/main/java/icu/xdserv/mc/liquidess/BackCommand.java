@@ -75,8 +75,6 @@ public class BackCommand implements ICommand, Listener {
         public final Set<Location> walked = new HashSet<>();
         public final int maxSteps;
 
-        public final Queue<Location> queue = new ArrayDeque<>();
-
         public Walker (int maxSteps) {
             this.maxSteps = maxSteps;
         }
