@@ -4,7 +4,6 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.SoundCategory;
@@ -17,7 +16,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.PlayerDeathEvent;
 
 import java.util.*;
-import java.util.logging.Level;
 
 public class BackCommand implements ICommand, Listener {
 
@@ -109,7 +107,6 @@ public class BackCommand implements ICommand, Listener {
 
             // Solid ground with at least 2 blocks of vertical space
             if (down.isSolid() && up.isEmpty()) {
-                Bukkit.getLogger().log(Level.INFO, String.format("Accepted: %s", location));
                 accepted.add(location.toBlockLocation());
             }
 
