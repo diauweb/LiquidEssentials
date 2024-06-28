@@ -1,0 +1,4 @@
+name: LiquidEssentials
+version: '${project.version}'
+main: icu.xdserv.mc.liquidess.LiquidEssentials
+api-version: '1.21'
