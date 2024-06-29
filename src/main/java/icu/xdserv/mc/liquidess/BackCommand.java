@@ -4,9 +4,8 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
-import org.bukkit.ChatColor;
-import org.bukkit.Location;
-import org.bukkit.SoundCategory;
+import org.apache.commons.lang3.tuple.Triple;
+import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.command.CommandSender;
@@ -58,12 +57,11 @@ public class BackCommand implements ICommand, Listener {
         return false;
     }
 
-    // TODO: support plumbing towards every direction
-    private static int plumb(Location location /* , BlockFace towards */) {
+    private static int plumb(Location location, boolean upwards, boolean toAir) {
         Location cloned = location.clone();
 
         int offset = 0;
-        while (cloned.add(0, -1, 0).getBlock().isEmpty()) {
+        while (toAir ^ cloned.add(0, upwards ? 1 : -1, 0).getBlock().isEmpty()) {
             ++offset;
         }
 
@@ -80,72 +78,61 @@ public class BackCommand implements ICommand, Listener {
         }
 
         public void walk(Location location) {
-            dfs(location, 0, false);
-        }
+            Queue<Triple<Location, Integer, Boolean>> queue = new ArrayDeque<>();
+            queue.add(Triple.of(location, 0, false));
 
-        // TODO: support flying onto the ceiling, and rewrite the whole thing in BFS.
-        private void dfs(Location location, int steps, boolean climbing) {
-            if (walked.contains(location.toBlockLocation()) || steps > maxSteps) {
-                return;
-            }
+            while (!queue.isEmpty()) {
+                var triple = queue.poll();
 
-            walked.add(location.toBlockLocation());
+                // State arguments
+                Location loc = triple.getLeft();
+                int steps = triple.getMiddle();
+                boolean climbing = triple.getRight();
 
-            Block block = location.getBlock();
-            if (block.isSolid()) {
-                return;
-            }
+                if (walked.contains(loc) || steps > maxSteps) {
+                    continue;
+                }
+                walked.add(loc);
 
-            Block up = block.getRelative(BlockFace.UP);
-            Block down = block.getRelative(BlockFace.DOWN);
-            Block east = block.getRelative(BlockFace.EAST);
-            Block west = block.getRelative(BlockFace.WEST);
-            Block north = block.getRelative(BlockFace.NORTH);
-            Block south = block.getRelative(BlockFace.SOUTH);
+                Block block = loc.getBlock();
+                if (block.isSolid()) {
+                    continue;
+                }
 
-            // Solid ground with at least 2 blocks of vertical space
-            if (down.isSolid() && up.isEmpty()) {
-                accepted.add(location.toBlockLocation());
-            }
+                Block east = block.getRelative(BlockFace.EAST);
+                Block west = block.getRelative(BlockFace.WEST);
+                Block up = block.getRelative(BlockFace.UP);
+                Block down = block.getRelative(BlockFace.DOWN);
+                Block north = block.getRelative(BlockFace.NORTH);
+                Block south = block.getRelative(BlockFace.SOUTH);
 
-            if (down.isEmpty()) {
-                if (!climbing) {
-                    // Downward stairs
-                    int drop = plumb(location);
-                    dfs(location.clone().add(0, -drop, 0), steps + 1, false);
-                } else {
-                    // Extending platform
-                    dfs(location.clone().add(1, 0, 0), steps + 1, true);
-                    dfs(location.clone().add(0, 0, 1), steps + 1, true);
-                    dfs(location.clone().add(-1, 0, 0), steps + 1, true);
-                    dfs(location.clone().add(0, 0, -1), steps + 1, true);
+                // Solid ground with at least 2 blocks of vertical space
+                if (down.isSolid() && up.isEmpty()) {
+                    accepted.add(loc.toBlockLocation());
+                }
+
+                // Flat surface or extending platform
+                if (climbing ^ down.isSolid()) {
+                    queue.add(Triple.of(loc.clone().add(1, 0, 0), steps + 1, false));
+                    queue.add(Triple.of(loc.clone().add(0, 0, 1), steps + 1, false));
+                    queue.add(Triple.of(loc.clone().add(-1, 0, 0), steps + 1, false));
+                    queue.add(Triple.of(loc.clone().add(0, 0, -1), steps + 1, false));
                 }
 
                 // Vertical wall
-                if (!east.isEmpty() || !north.isEmpty() || !west.isEmpty() || !south.isEmpty()) {
-                    dfs(location.clone().add(0, 1, 0), steps + 1, true);
+                if (east.isSolid() || north.isSolid() || west.isSolid() || south.isSolid()) {
+                    queue.add(Triple.of(loc.clone().add(0, 1, 0), steps + 1, true));
                 }
-            } else {
-                // Flat surface
-                dfs(location.clone().add(1, 0, 0), steps + 1, false);
-                dfs(location.clone().add(0, 0, 1), steps + 1, false);
-                dfs(location.clone().add(-1, 0, 0), steps + 1, false);
-                dfs(location.clone().add(0, 0, -1), steps + 1, false);
 
-                // Upward stairs
-                if (up.isEmpty()) {
-                    if (!east.isEmpty()) {
-                        dfs(location.clone().add(1, 1, 0), steps + 1, false);
-                    }
-                    if (!north.isEmpty()) {
-                        dfs(location.clone().add(0, 1, 1), steps + 1, false);
-                    }
-                    if (!west.isEmpty()) {
-                        dfs(location.clone().add(-1, 1, 0), steps + 1, false);
-                    }
-                    if (!south.isEmpty()) {
-                        dfs(location.clone().add(0, 1, -1), steps + 1, false);
-                    }
+                // Special cases
+                if (!climbing || down.isEmpty()) {
+                    // Striking downward
+                    int drop = plumb(loc, false, false);
+                    queue.add(Triple.of(loc.clone().add(0, -drop, 0), steps + drop, false));
+                } else if (block.isLiquid()) {
+                    // Getting out of the water
+                    int fly = plumb(loc, true, true);
+                    queue.add(Triple.of(loc.clone().add(0, fly + 1, 0), steps + fly + 1, false));
                 }
             }
         }
@@ -161,47 +148,51 @@ public class BackCommand implements ICommand, Listener {
 
         Location locRespawn = lastLocations.get(p.getUniqueId());
         if (locRespawn == null) {
-            sender.sendMessage(ChatColor.RED + "没有找到上一个死亡地点");
+            sender.sendMessage(ChatColor.RED + "[Back] 没有找到上一个死亡地点");
             return 1;
         }
         lastLocations.remove(p.getUniqueId());
 
-        final double boundFrom = 50;
-        final double boundTo = 100;
+        final double boundFrom = 32;
+        final double boundTo = 64;
 
-        Walker walker = new Walker((int) (boundTo * 2));
-        walker.walk(locRespawn.clone().add(0, 2, 0));
-        // If we use BFS this could probably be simplified to O(1), since the farther the accepted location is, the
-        // nearer to the end of the list will it be. Just simple random access is enough then.
-        var accepted = walker.accepted.stream()
-                .filter(l -> l.distance(locRespawn) >= boundFrom)
-                .toList();
-        if (!accepted.isEmpty()) {
-            p.teleport(accepted.get((int) (rand.nextDouble() * accepted.size())).add(.5, .5, .5));
-            p.sendMessage(ChatColor.GREEN + "已返回到与死亡地点连通的区域内");
+        // Multiply by sqrt(2) because our moves have no antialiasing.
+        Walker walker = new Walker((int) (boundTo * Math.sqrt(2)));
+        walker.walk(locRespawn.clone());
+        if (!walker.accepted.isEmpty()) {
+            // Randomly choose one from the end of the list, making use of the nature of BFS.
+            int i = (int) (rand.nextDouble(.9, 1) * walker.accepted.size());
+            p.teleport(walker.accepted.get(i).add(.5, .5, .5));
+            p.sendMessage(ChatColor.GREEN + "[Back] 已返回到与死亡地点连通的区域内");
             p.playSound(p.getLocation(), "liquid:sfx/teleport_waypoint", SoundCategory.MASTER, 1.0F, 1.0F);
             return 0;
         }
 
-        // Poor one... They must've been buried by sand or gravel.
-        for (int tries = 0; tries < 10; tries++) {
+        // Poor one... They must've been buried by sand and gravel, or drown in endless sea and lava pool
+        outer: for (int tries = 0; tries < 10; tries++) {
             double tpOffsetX = (rand.nextInt(2) == 0 ? 1 : -1) * (rand.nextDouble() * (boundTo - boundFrom) + boundFrom);
             double tpOffsetZ = (rand.nextInt(2) == 0 ? 1 : -1) * (rand.nextDouble() * (boundTo - boundFrom) + boundFrom);
             Location offsetLoc = locRespawn.clone().add(tpOffsetX, 0, tpOffsetZ);
+            World world = locRespawn.getWorld();
 
-            int i = Math.min(locRespawn.getBlockY(), locRespawn.getWorld().getHighestBlockYAt(offsetLoc));
-            for (; i <= locRespawn.getWorld().getHighestBlockYAt(locRespawn); i++) {
+            int i = Math.min(locRespawn.getBlockY(), world.getHighestBlockYAt(offsetLoc));
+            for (; i <= world.getHighestBlockYAt(locRespawn); i++) {
                 offsetLoc.setY(i);
                 if (isSafeLocation(offsetLoc)) {
+                    // Prevent teleporting onto bedrock platform in Nether
+                    if (world.getEnvironment() == World.Environment.NETHER && offsetLoc.getBlockY() > 120) {
+                        continue outer;
+                    }
+
                     p.teleport(offsetLoc.add(0, 1, 0));
-                    p.sendMessage(ChatColor.GREEN + "已返回到死亡地点附近");
+                    p.sendMessage(ChatColor.YELLOW + "[Back] 已返回到死亡地点附近的随机区域内");
                     p.playSound(p.getLocation(), "liquid:sfx/teleport_waypoint", SoundCategory.MASTER, 1.0F, 1.0F);
                     return 0;
                 }
             }
         }
 
-        sender.sendMessage(ChatColor.RED + "没有合适的地点返回");
+        sender.sendMessage(ChatColor.RED + "[Back] 没有合适的地点返回");
         return 1;
     }
 }
